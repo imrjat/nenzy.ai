@@ -1,6 +1,8 @@
 <?php
 
+use App\Http\Controllers\ChatMessageController;
 use App\Http\Controllers\ProfileController;
+use App\Models\User;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -15,7 +17,12 @@ Route::get('/', function () {
 });
 
 Route::get('/dashboard', function () {
-    return Inertia::render('Dashboard');
+    return Inertia::render(
+        'Dashboard',
+        [
+            'users' => User::where('id', '!=', auth()->user()->id)->get()
+        ]
+    );
 })->middleware(['auth', 'verified'])->name('dashboard');
 
 Route::middleware('auth')->group(function () {
@@ -24,4 +31,6 @@ Route::middleware('auth')->group(function () {
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 });
 
-require __DIR__.'/auth.php';
+Route::resource('/chat', ChatMessageController::class);
+
+require __DIR__ . '/auth.php';
