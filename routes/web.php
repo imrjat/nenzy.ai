@@ -1,11 +1,16 @@
 <?php
 
 use App\Http\Controllers\ChatMessageController;
+use App\Http\Controllers\ChatWithAIController;
 use App\Http\Controllers\ProfileController;
 use App\Models\User;
+
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
+
+use EchoLabs\Prism\Prism;
+use EchoLabs\Prism\Enums\Provider;
 
 Route::get('/', function () {
     return Inertia::render('Welcome', [
@@ -32,5 +37,5 @@ Route::middleware('auth')->group(function () {
 });
 
 Route::resource('/chat', ChatMessageController::class);
-
+Route::resource('chat-with-ai', ChatWithAIController::class);
 require __DIR__ . '/auth.php';
