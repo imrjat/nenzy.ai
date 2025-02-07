@@ -56,18 +56,22 @@ class ChatWithAIController extends Controller
             requiredFields: ['question', 'topic', 'difficulty']
         );
 
+        // $response = Prism::structured()
+        //     ->using(Provider::OpenAI, 'gpt-4o-mini')
+        //     ->withSchema($questionSchema)
+        //     ->withMessages($messages)
+        //     ->generate();
 
         // Generate the structured interview question
-        $response = Prism::structured()
-            ->using(Provider::OpenAI, 'gpt-4o-mini')
-            ->withSchema($questionSchema)
+        $response = Prism::text()
+            ->using(Provider::Gemini, 'gemini-1.5-flash')
             ->withMessages($messages)
             ->generate();
 
         // Extract the structured data
-        $structuredData = $response->structured;
+        $structuredData = $response->text;
 
         // Return the generated question as a JSON response
-        return response()->json(['question' => $structuredData['question']]);
+        return response()->json(['question' => $structuredData]);
     }
 }
