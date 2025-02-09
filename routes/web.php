@@ -38,4 +38,7 @@ Route::middleware('auth')->group(function () {
 
 Route::resource('/chat', ChatMessageController::class);
 Route::resource('chat-with-ai', ChatWithAIController::class);
+Route::get('voice-chat',function(){
+    return Inertia::render('VoiceChat/Index3');
+});
 require __DIR__ . '/auth.php';
