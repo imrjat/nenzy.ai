@@ -16,16 +16,7 @@ const chatMessages = ref(props.messages);
 onMounted(() => {
 
 
-    window.Echo.join(`chat.${page.props.auth.user.id}`)
-        .here((users) => {
-            console.log("Current users:", users);
-        })
-        .joining((user) => {
-            console.log(user.name + " joined the chat");
-        })
-        .leaving((user) => {
-            console.log(user.name + " left the chat");
-        })
+    window.Echo.private(`chat.${page.props.auth.user.id}`)
         .listen('MessageSent', (e) => {
             chatMessages.value.push(e.message);
         });

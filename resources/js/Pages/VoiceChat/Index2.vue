@@ -1,85 +1,125 @@
 <template>
-    <div class="voice-chat-app">
-        <!-- Overlay for user gesture -->
-        <div v-if="audioContextNotStarted" class="gesture-overlay" @click="startAudioSystem">
-            <p>Click to start the chat</p>
+    <div class="voice-chat-container p-4">
+        <div v-if="state.audioContextNotStarted" class="text-center p-4">
+            <button @click="initializeAudioSystem"
+                class="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600">
+                Start Voice Chat
+            </button>
         </div>
 
-        <!-- Main app content -->
         <div v-else>
-            <div class="status-bar" role="status" aria-live="polite">
-                <span>{{ statusMessage }}</span>
+            <div class="controls-section mb-4 p-4 bg-gray-100 rounded-lg">
+                <div class="status-container flex items-center justify-between mb-2">
+                    <span class="status-message text-lg" :class="{
+                        'text-green-600': state.isListening && !state.isProcessing,
+                        'text-blue-600': state.isProcessing,
+                        'text-red-600': errorMessage
+                    }">
+                        {{ statusMessage }}
+                    </span>
+                    <div v-if="state.isListening"
+                        class="volume-meter h-4 w-32 bg-gray-200 rounded-full overflow-hidden">
+                        <div class="h-full bg-green-500 transition-all duration-100"
+                            :style="{ width: `${Math.min(state.volumeLevel * 100, 100)}%` }">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex gap-2">
+                    <button @click="toggleMute" class="px-4 py-2 rounded-lg"
+                        :class="state.isMuted ? 'bg-yellow-500 text-white' : 'bg-blue-500 text-white'">
+                        {{ state.isMuted ? 'Unmute' : 'Mute' }}
+                    </button>
+                </div>
+
+                <div v-if="errorMessage" class="error-message mt-2 text-red-600">
+                    {{ errorMessage }}
+                </div>
             </div>
 
-            <div class="chat-container" ref="chatContainer">
-                <div v-for="(msg, index) in messages" :key="index" :class="['message', msg.role]">
-                    <p>{{ msg.content }}</p>
-                </div>
-                <div v-if="isLoading" class="message assistant">
-                    <p>Processing...</p>
+            <div ref="chatContainer" class="chat-container h-96 overflow-y-auto p-4 bg-white rounded-lg shadow">
+                <div v-for="(message, index) in messages" :key="index" class="message-container mb-4"
+                    :class="message.role === 'user' ? 'text-right' : 'text-left'">
+                    <div class="inline-block max-w-3/4 p-3 rounded-lg"
+                        :class="message.role === 'user' ? 'bg-blue-100' : 'bg-gray-100'">
+                        <div class="message-content">{{ message.content }}</div>
+                        <div class="message-timestamp text-xs text-gray-500 mt-1">
+                            {{ message.timestamp }}
+                        </div>
+                    </div>
                 </div>
             </div>
-
-            <button @click="toggleMute" :class="{ muted: isMuted }">
-                {{ isMuted ? 'Unmute' : 'Mute' }}
-            </button>
         </div>
     </div>
 </template>
 
 <script setup>
-import { ref, watch } from 'vue';
+import { ref, watch, onBeforeUnmount } from 'vue';
 
-// State variables
-const audioContextNotStarted = ref(true);  // Controls whether to show the overlay
-const isMuted = ref(false);
-const isLoading = ref(false);
-const statusMessage = ref('Click to start the chat');
+const state = ref({
+    audioContextNotStarted: true,
+    isMuted: false,
+    isListening: false,
+    isProcessing: false,
+    isSpeaking: false,
+    volumeLevel: 0,
+    
+});
+
 const messages = ref([]);
+const statusMessage = ref('Click Start Voice Chat to begin');
 const chatContainer = ref(null);
+const errorMessage = ref('');
 
-// Audio system variables
 let audioContext = null;
-let analyser = null;
 let audioStream = null;
 let mediaRecorder = null;
 let audioChunks = [];
+let analyser = null;
+let source = null;
+let animationFrame = null;
 let silenceTimeout = null;
 
-// **Initialize the audio system on user gesture**
-const startAudioSystem = async () => {
+const initializeAudioSystem = async () => {
     try {
-        // Create and resume the AudioContext on user gesture
+        // Request microphone access first
+        audioStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true
+            }
+        });
+
+        // Create audio context after getting microphone access
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        if (audioContext.state === 'suspended') {
-            await audioContext.resume();
-        }
+        await audioContext.resume();
 
-        // Request microphone access
-        audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-        // Set up the audio analyser node
+        // Set up audio nodes
+        source = audioContext.createMediaStreamSource(audioStream);
         analyser = audioContext.createAnalyser();
-        const source = audioContext.createMediaStreamSource(audioStream);
-        source.connect(analyser);
         analyser.fftSize = 2048;
+        source.connect(analyser);
 
-        // Voice detection setup
-        setupVoiceDetection();
-        startAudioMonitoring();
+        // Initialize MediaRecorder
+        mediaRecorder = new MediaRecorder(audioStream, {
+            mimeType: 'audio/webm'
+        });
 
-        // Update state after successful initialization
-        audioContextNotStarted.value = false;
-        statusMessage.value = 'Ready to chat!';
+        setupRecorder();
+
+        state.value.audioContextNotStarted = false;
+        statusMessage.value = 'Ready! Voice chat is active';
+        startVoiceActivityDetection();
+        startRecording();
     } catch (error) {
-        statusMessage.value = 'Error: Microphone access is required.';
-        console.error('Audio system initialization error:', error);
+        console.error('Error initializing:', error);
+        errorMessage.value = `Initialization error: ${error.message}`;
     }
 };
 
-// **Setup voice detection**
-const setupVoiceDetection = () => {
-    mediaRecorder = new MediaRecorder(audioStream, { mimeType: 'audio/webm;codecs=opus' });
+const setupRecorder = () => {
+    if (!mediaRecorder) return;
 
     mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
@@ -88,125 +128,203 @@ const setupVoiceDetection = () => {
     };
 
     mediaRecorder.onstop = async () => {
-        if (audioChunks.length && !isMuted.value) {
+        if (audioChunks.length === 0) return;
+
+        try {
+            state.value.isProcessing = true;
+            statusMessage.value = 'Processing recording...';
+
             const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            await processAudio(audioBlob);
+
             audioChunks = [];
-            if (audioBlob.size > 0) {
-                await processAudio(audioBlob);
-            }
+        } catch (error) {
+            console.error('Processing error:', error);
+            errorMessage.value = `Processing error: ${error.message}`;
+        } finally {
+            state.value.isProcessing = false;
         }
     };
 };
 
-// **Monitor audio levels**
-const startAudioMonitoring = () => {
+const startVoiceActivityDetection = () => {
     const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
-    const checkAudioLevel = () => {
+    const detectVoice = () => {
         analyser.getByteFrequencyData(dataArray);
-        const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
-        const audioLevel = average / 255;
+        const average = dataArray.reduce((sum, value) => sum + value, 0) / dataArray.length;
+        state.value.volumeLevel = average / 255;
 
-        if (audioLevel > 0.05) handleSpeechDetected();
+        if (average > 20) { // Threshold for voice detection
+            if (!state.value.isListening && !state.value.isProcessing && !state.value.isSpeaking) {
+                startRecording();
+            }
+            clearTimeout(silenceTimeout);
+            silenceTimeout = setTimeout(() => {
+                if (state.value.isListening) {
+                    stopRecording();
+                }
+            }, 3000); // 3 seconds of silence
+        }
 
-        requestAnimationFrame(checkAudioLevel);
+        animationFrame = requestAnimationFrame(detectVoice);
     };
 
-    checkAudioLevel();
+    detectVoice();
 };
 
-// **Handle speech detection**
-const handleSpeechDetected = () => {
-    if (!mediaRecorder || isMuted.value) return;
+const startRecording = () => {
+    console.log(state.value.isListening)
+    console.log(state.value.isProcessing)
+    console.log(state.value.isSpeaking)
+    if (state.value.isListening || state.value.isProcessing || state.value.isSpeaking) return;
 
-    if (!mediaRecorder.state || mediaRecorder.state !== 'recording') {
-        mediaRecorder.start();
-        statusMessage.value = 'Listening...';
+    audioChunks = [];
+    mediaRecorder.start();
+    state.value.isListening = true;
+    statusMessage.value = 'Recording...';
+};
+
+const stopRecording = () => {
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+        cancelAnimationFrame(animationFrame);
     }
-
-    // Reset silence timeout
-    if (silenceTimeout) clearTimeout(silenceTimeout);
-
-    // Stop recording after a period of silence
-    silenceTimeout = setTimeout(() => {
-        if (mediaRecorder.state === 'recording') {
-            mediaRecorder.stop();
-            statusMessage.value = 'Processing...';
-        }
-    }, 1500);
+    state.value.isListening = false;
+    statusMessage.value = 'Recording stopped';
 };
 
-// **Process audio and get AI response**
 const processAudio = async (audioBlob) => {
     try {
-        isLoading.value = true;
-
-        // Transcribe audio using OpenAI Whisper
         const formData = new FormData();
-        formData.append('file', audioBlob);
+        formData.append('file', audioBlob, 'audio.webm');
         formData.append('model', 'whisper-1');
 
-        const transcriptResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+        const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
             method: 'POST',
-            headers: { 'Authorization': `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}` },
+            headers: {
+                'Authorization': `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`
+            },
             body: formData
         });
 
-        if (!transcriptResponse.ok) throw new Error('Transcription failed');
-        const { text } = await transcriptResponse.json();
+        if (!response.ok) throw new Error('Transcription failed');
 
-        // Add user message to chat
-        messages.value.push({ role: 'user', content: text });
+        const { text } = await response.json();
 
-        // Get AI response from OpenAI
-        const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+        if (text && text.trim()) {
+            messages.value.push({
+                role: 'user',
+                content: text,
+                timestamp: new Date().toLocaleTimeString()
+            });
+
+            // Stop the recording immediately after processing audio
+            stopRecording();
+
+            await getAIResponse();
+        }
+    } catch (error) {
+        errorMessage.value = `Processing failed: ${error.message}`;
+        stopRecording(); // Ensure recording stops if error occurs during audio processing
+    }
+};
+
+const getAIResponse = async () => {
+    try {
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                model: 'gpt-4',
-                messages: messages.value.map(msg => ({ role: msg.role, content: msg.content }))
+                model: 'gpt-4o-mini',
+                messages: messages.value.map(msg => ({
+                    role: msg.role,
+                    content: msg.content
+                })),
+                temperature: 0.7,
+                max_tokens: 150
             })
         });
 
-        if (!aiResponse.ok) throw new Error('AI response failed');
-        const { choices } = await aiResponse.json();
+        if (!response.ok) throw new Error('AI response failed');
 
-        // Add AI response to chat and speak it out
-        const responseText = choices[0].message.content;
-        messages.value.push({ role: 'assistant', content: responseText });
+        const { choices } = await response.json();
+        const aiMessage = choices[0].message.content;
 
-        if (!isMuted.value) await speakText(responseText);
+        messages.value.push({
+            role: 'assistant',
+            content: aiMessage,
+            timestamp: new Date().toLocaleTimeString()
+        });
+
+        if (!state.value.isMuted) {
+            await speakResponse(aiMessage);
+        }
+
+        // Start voice activity detection after processing the AI response.
+        state.value.isSpeaking = false;
+        startVoiceActivityDetection();
     } catch (error) {
-        console.error('Error processing audio:', error);
-        statusMessage.value = 'Error occurred. Try again.';
-    } finally {
-        isLoading.value = false;
-        statusMessage.value = 'Ready to chat!';
+        errorMessage.value = `AI response failed: ${error.message}`;
     }
 };
 
-// **Text-to-speech function**
-const speakText = (text) => {
-    return new Promise((resolve, reject) => {
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.rate = 1.0;
-        utterance.pitch = 1.0;
-        utterance.onend = resolve;
-        utterance.onerror = reject;
-        window.speechSynthesis.speak(utterance);
+const speakResponse = async (text) => {
+
+    const response = await fetch("https://api.openai.com/v1/audio/speech", {
+        method: "POST",
+        headers: {
+            'Authorization': `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            model: "tts-1",
+            input: text,
+            voice: "shimmer"
+        })
     });
+
+    if (!response.ok) {
+        console.error("Error fetching speech:", response.statusText);
+        return;
+    }
+
+    // Convert response into playable audio
+    const audioBlob = await response.blob();
+    const audioUrl = URL.createObjectURL(audioBlob);
+
+    const audio = new Audio(audioUrl);
+    audio.onended = () => {
+        state.value.isSpeaking = false; // Reset when AI finishes speaking
+    };
+    audio.play();
+
 };
 
-// **Toggle mute**
+
 const toggleMute = () => {
-    isMuted.value = !isMuted.value;
-    statusMessage.value = isMuted.value ? 'Muted' : 'Ready to chat!';
+    state.value.isMuted = !state.value.isMuted;
+    statusMessage.value = state.value.isMuted ? 'Muted' : 'Ready';
 };
 
-// Scroll to the latest message
+onBeforeUnmount(() => {
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+    }
+    if (audioStream) {
+        audioStream.getTracks().forEach(track => track.stop());
+    }
+    if (audioContext) {
+        audioContext.close();
+    }
+    if (animationFrame) {
+        cancelAnimationFrame(animationFrame);
+    }
+});
+
 watch(messages, () => {
     if (chatContainer.value) {
         setTimeout(() => {
@@ -215,36 +333,3 @@ watch(messages, () => {
     }
 });
 </script>
-
-<style scoped>
-.voice-chat-app {
-    font-family: Arial, sans-serif;
-    text-align: center;
-    padding: 20px;
-}
-
-.status-bar {
-    margin-bottom: 20px;
-}
-
-.message {
-    margin: 10px 0;
-}
-
-.gesture-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgba(0, 0, 0, 0.8);
-    color: white;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.5rem;
-    z-index: 1000;
-    cursor: pointer;
-    text-align: center;
-}
-</style>
