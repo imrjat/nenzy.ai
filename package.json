@@ -22,6 +22,9 @@
         "vue": "^3.4.0"
     },
     "dependencies": {
-        "openai": "^4.83.0"
+        "@tensorflow-models/speech-commands": "^0.5.4",
+        "openai": "^4.83.0",
+        "recorder-js": "^1.0.7",
+        "rnnoise-wasm": "^0.0.1-security"
     }
 }
