@@ -77,7 +77,6 @@ let mediaRecorder = null;
 let audioChunks = [];
 let analyser = null;
 let source = null;
-let highPassFilter = null;
 let animationFrame = null;
 let silenceTimeout = null;
 
@@ -124,7 +123,7 @@ const initializeAudioSystem = async () => {
         source = audioContext.createMediaStreamSource(audioStream);
         const compressor = audioContext.createDynamicsCompressor();
         const gainNode = audioContext.createGain();
-        highPassFilter = audioContext.createBiquadFilter();
+        const highPassFilter = audioContext.createBiquadFilter();
         const lowPassFilter = audioContext.createBiquadFilter();
 
         // Configure nodes
@@ -208,6 +207,11 @@ const startVoiceActivityDetection = () => {
     const dataArray = new Uint8Array(bufferLength);
     let isProcessing = false;
 
+    // Variables to track sustained activity
+    let sustainedSpeechStart = null;
+    const requiredSpeechDuration = 300; // milliseconds required before starting recording
+    const speechThreshold = 15; // Adjust as needed
+
     const detectVoice = () => {
         if (!analyser || isProcessing) return;
 
@@ -217,7 +221,6 @@ const startVoiceActivityDetection = () => {
 
             const weightedRMS = Math.sqrt(
                 dataArray.reduce((sum, value, index) => {
-                    if (index >= bufferLength) return sum;
                     const frequency = (index * (audioContext?.sampleRate ?? 44100)) / (analyser?.fftSize ?? 1024);
                     const weight = (frequency > 300 && frequency < 3000) ? 1.2 : 0.8;
                     return sum + (value * value * weight);
@@ -226,14 +229,24 @@ const startVoiceActivityDetection = () => {
 
             state.value.volumeLevel = Math.min(Math.max(weightedRMS / 255, 0), 1);
 
-            if (weightedRMS > 15) {
-                if (!state.value.isListening) {
-                    startRecording();
+            // Check if the signal exceeds the threshold
+            if (weightedRMS > speechThreshold) {
+                if (sustainedSpeechStart === null) {
+                    // Start the timer when threshold is first crossed
+                    sustainedSpeechStart = Date.now();
+                } else if (Date.now() - sustainedSpeechStart > requiredSpeechDuration) {
+                    // If the condition has been sustained, start recording if not already
+                    if (!state.value.isListening) {
+                        startRecording();
+                    }
+                    // Clear any previous silence timeout and set a new one
+                    clearTimeout(silenceTimeout);
+                    silenceTimeout = setTimeout(stopRecording, 2000);
                 }
-                clearTimeout(silenceTimeout);
-                silenceTimeout = setTimeout(stopRecording, 2000);
+            } else {
+                // Reset the sustained timer if the level drops below threshold
+                sustainedSpeechStart = null;
             }
-
         } catch (err) {
             console.error('Error in voice detection:', err);
         } finally {
@@ -245,6 +258,7 @@ const startVoiceActivityDetection = () => {
 
     detectVoice();
 };
+
 
 const startRecording = () => {
     if (state.value.isMuted || state.value.isListening || state.value.isProcessing || state.value.isSpeaking) return;
@@ -431,6 +445,7 @@ const toggleMute = () => {
     state.value.isMuted = !state.value.isMuted;
     statusMessage.value = state.value.isMuted ? 'Muted' : 'Ready';
 };
+
 
 const cleanup = () => {
     if (mediaRecorder?.state === 'recording') {
