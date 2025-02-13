@@ -270,7 +270,7 @@ const processAudio = async (audioBlob) => {
         formData.append('model', 'whisper-1');
         // Specialized interview prompt
         formData.append('prompt',
-            "Ignore casual expressions, background noise, and non-interview related speech. "
+            "Analyze the audio file to detect and classify background noise, distinguishing between speech and non-speech elements. Transcribe the given audio file into text, accurately capturing spoken words while minimizing errors caused by background noise or unclear speech."
         );
 
         formData.append('language', 'en');
